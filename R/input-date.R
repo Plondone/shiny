@@ -47,6 +47,12 @@
 #' or a string in `yyyy-mm-dd` format.
 #' @param daysofweekdisabled Days of the week that should be disabled. Should be
 #'   a integer vector with values from 0 (Sunday) to 6 (Saturday).
+#' @param ... not currently used.
+#' @param sassVars a list of Sass variables for influencing the date input's
+#'   default CSS styles. [See here](https://github.com/rstudio/shiny/tree/master/inst/www/shared/datepicker/scss/build3.scss)
+#'   for a list of relevant variables. Since these variables may already be
+#'   defined in a **bootstraplib** theme, `!default` flags likely shouldn't
+#'   be included in these variable definitions.
 #'
 #' @family input elements
 #' @seealso [dateRangeInput()], [updateDateInput()]
@@ -94,7 +100,7 @@
 dateInput <- function(inputId, label, value = NULL, min = NULL, max = NULL,
   format = "yyyy-mm-dd", startview = "month", weekstart = 0,
   language = "en", width = NULL, autoclose = TRUE,
-  datesdisabled = NULL, daysofweekdisabled = NULL) {
+  datesdisabled = NULL, daysofweekdisabled = NULL, ..., sassVars = list()) {
 
   value <- dateYMD(value, "value")
   min <- dateYMD(min, "min")
@@ -124,19 +130,98 @@ dateInput <- function(inputId, label, value = NULL, min = NULL, max = NULL,
                `data-date-days-of-week-disabled` =
                    jsonlite::toJSON(daysofweekdisabled, null = 'null')
     ),
-    datePickerDependency
+    datePickerDependencies(sassVars)
   )
 }
 
-datePickerDependency <- htmlDependency(
-  "bootstrap-datepicker", "1.6.4", c(href = "shared/datepicker"),
-  script = "js/bootstrap-datepicker.min.js",
-  stylesheet = "css/bootstrap-datepicker3.min.css",
-  # Need to enable noConflict mode. See #1346.
-  head = "<script>
-(function() {
-  var datepicker = $.fn.datepicker.noConflict();
-  $.fn.bsDatepicker = datepicker;
-})();
-</script>"
-)
+datePickerDependencies <- function(sassVars = list()) {
+  if (useBsTheme() || length(sassVars) == 0) {
+    scssDir <- system.file(package = "shiny", "www", "shared", "datepicker", "scss")
+    tmpDir <- tempfile("datepicker-scss")
+    dir.create(tmpDir)
+    outFile <- file.path(tmpDir, "custom.css")
+    sassFunc <- if (useBsTheme()) bootstraplib::bootstrap_sass else sass::sass
+    defaults <- list(bsThemeDateDefaults(), sassVars)
+    sassFunc(
+      list(
+        defaults,
+        sass::sass_file(file.path(scssDir, "build3.scss"))
+      ),
+      output = outFile
+    )
+    # Hash the defaults so that the html dependency from one date-picker won't stomp another
+    cssDependency <- htmlDependency(
+      paste0("datepicker-datepicker-css-", digest::digest(defaults, "xxhash64")),
+      version = datePickerVersion,
+      src = dirname(outFile),
+      stylesheet = basename(outFile)
+    )
+  } else {
+    cssDependency <- htmlDependency(
+      "bootstrap-datepicker-css",
+      version = datePickerVersion,
+      src = c(href = "shared/datepicker"),
+      stylesheet = "css/bootstrap-datepicker3.min.css",
+    )
+  }
+
+  list(
+    cssDependency,
+    htmlDependency(
+      "bootstrap-datepicker-js",
+      version = datePickerVersion,
+      c(href = "shared/datepicker"),
+      script = "js/bootstrap-datepicker.min.js",
+      # Need to enable noConflict mode. See #1346.
+      head = "<script>(function() {
+        var datepicker = $.fn.datepicker.noConflict();
+        $.fn.bsDatepicker = datepicker;
+      })();
+     </script>"
+    )
+  )
+}
+
+
+bsThemeDateDefaults <- function() {
+  if (!useBsTheme()) {
+    return(list())
+  }
+
+  version <- bootstraplib::theme_version()
+  if ("3" %in% version) {
+    return(list(
+      "@function color-contrast($color, $dark: $gray-darker, $light: $text-color) {
+        @return if(
+          red($color) * 0.299 + green($color) * 0.587 + blue($color) * 0.114 > 150,
+          $dark, $light
+        );
+      }",
+      # No !default flag because these are variables already defined by Bootstrap
+      list(
+        "btn-primary-color" = "color-contrast($btn-primary-bg)",
+        "btn-primary-color-hover" = "color-contrast($gray-lighter)",
+        "state-info-bg" = "mix($body-bg, $brand-primary, 20%)",
+        "dropdown-bg" = "$body-bg",
+        "dropdown-border" = "mix($text-color, $body-bg, 15%)"
+      )
+    ))
+  }
+
+  list(
+    "gray" = "gray('300')",
+    "gray-light" = "gray('500')",
+    "gray-lighter" = "gray('900')",
+    "brand-primary" = "mix($black, theme-color('primary'), 6.5%)",
+    "btn-primary-color" = "color-yiq($brand-primary)",
+    "btn-primary-color-hover" = "color-yiq($gray-lighter)",
+    "btn-primary-bg" = "$brand-primary",
+    "btn-primary-border" = "darken($btn-primary-bg, 5%)",
+    "btn-link-disabled-color" = "$gray-light",
+    "state-info-bg" = "mix($white, $brand-primary, 20%)",
+    "line-height-base" = "20/14",
+    "border-radius-base" = "4px",
+    "dropdown-bg" = "$white",
+    "dropdown-border" = "mix($black, $white, 15%)"
+  )
+}
